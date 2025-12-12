@@ -75,6 +75,8 @@ poetry run pytest --cov=ai_ready_copilot
 
 ```
 ai_ready_copilot/
+├── resources/
+│   └── prompts.yaml        # Prompts del sistema abstraídos
 ├── src/
 │   └── ai_ready_copilot/
 │       ├── __init__.py
@@ -91,6 +93,8 @@ ai_ready_copilot/
 - **Uvicorn**: Servidor ASGI
 - **Pydantic**: Validación de datos
 - **python-dotenv**: Gestión de variables de entorno
+- **PyYAML**: Carga de archivos YAML para gestión de prompts
+- **google-genai**: SDK de Google Gemini para generación de contenido
 
 ## Licencia
 
@@ -163,6 +167,38 @@ Recibe una consulta en formato JSON y retorna una respuesta en streaming:
 La respuesta se envía como `text/plain` en formato streaming, permitiendo que el cliente reciba y muestre el contenido progresivamente.
 
 ## Diseño de Prompts
+
+### Gestión de prompts con YAML
+
+Los prompts del sistema están abstraídos en el archivo `resources/prompts.yaml` para facilitar su mantenimiento y actualización sin modificar el código Python. La aplicación utiliza **PyYAML** para cargar dinámicamente estos prompts al inicio.
+
+**Ventajas de esta arquitectura:**
+
+- **Separación de responsabilidades**: Los prompts están desacoplados del código de la aplicación
+- **Mantenimiento simplificado**: Modificar el comportamiento del asistente solo requiere editar el archivo YAML
+- **Escalabilidad**: Permite agregar múltiples prompts para diferentes contextos o roles
+- **Versionado independiente**: Los cambios en prompts pueden rastrearse por separado
+
+**Ubicación del archivo:**
+
+```
+resources/prompts.yaml
+```
+
+**Carga en la aplicación:**
+
+```python
+def load_prompts() -> dict:
+    """Carga los prompts desde el archivo prompts.yaml"""
+    prompts_path = Path(__file__).parent.parent.parent.parent / "resources" / "prompts.yaml"
+    with open(prompts_path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+PROMPTS = load_prompts()
+BASE_BEHAVIOR = PROMPTS["base_behavior"]
+```
+
+### Contenido del prompt base
 
 El prompt que recibe el modelo es el siguiente:
 
