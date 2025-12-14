@@ -6,6 +6,7 @@ Un copiloto de IA para gestión de recursos humanos.
 
 - Python >= 3.14
 - [Poetry](https://python-poetry.org/docs/#installation)
+- Docker (para la base de datos `pgvector` y `ollama` con el modelo `nomic-embed-text`)
 
 ## Instalación
 
@@ -49,42 +50,25 @@ Una vez que la API esté corriendo, puedes acceder a:
 - **Swagger UI**: http://localhost:8000/docs
 - **ReDoc**: http://localhost:8000/redoc
 
-### Modo producción
-
-Para ejecutar en modo producción (sin recarga automática):
-
-```bash
-poetry run uvicorn ai_ready_copilot.src.ai_ready_copilot.app:app
-```
-
-## Desarrollo
-
-### Ejecutar tests
-
-```bash
-poetry run pytest
-```
-
-### Ejecutar tests con cobertura
-
-```bash
-poetry run pytest --cov=ai_ready_copilot
-```
-
 ## Estructura del proyecto
 
 ```
 ai_ready_copilot/
+├── docker-compose.yaml          # Postgres + pgvector
+├── prepare_embeddings.py        # Script para generar embeddings
+├── docs/                        # Documentos base (.txt)
+│   ├── politica_gastos_Version2.txt
+│   └── politica_vacaciones_Version2.txt
 ├── resources/
-│   └── prompts.yaml        # Prompts del sistema abstraídos
+│   └── prompts.yaml             # Prompts del sistema abstraídos
 ├── src/
 │   └── ai_ready_copilot/
 │       ├── __init__.py
-│       └── app.py          # Aplicación FastAPI principal
-├── tests/                  # Tests unitarios
-├── pyproject.toml          # Configuración de Poetry
-├── README.md               # Este archivo
-└── .env                    # Variables de entorno (no versionado)
+│       └── app.py               # Aplicación FastAPI principal
+├── tests/                       # Tests unitarios
+├── pyproject.toml               # Configuración de Poetry
+├── README.md                    # Este archivo
+└── .env                         # Variables de entorno (no versionado)
 ```
 
 ## Dependencias principales
@@ -95,6 +79,50 @@ ai_ready_copilot/
 - **python-dotenv**: Gestión de variables de entorno
 - **PyYAML**: Carga de archivos YAML para gestión de prompts
 - **google-genai**: SDK de Google Gemini para generación de contenido
+- **psycopg2-binary**: Conexión a PostgreSQL/pgvector
+- **psycopg2-binary**: Conexión a PostgreSQL/pgvector
+- **ollama**: Cliente para embeddings locales con `nomic-embed-text`
+
+## Vector Store y Embeddings
+
+### Preparación de la base de datos
+
+1. Levanta PostgreSQL con pgvector usando Docker:
+
+```bash
+docker compose up -d
+```
+
+Esto inicia una instancia de Postgres en `localhost:5432` con la base de datos `ragdb`.
+
+Además se arranca una instancia de `ollama` en la que correrá un modelo `nomic-embed-text`
+
+### Generación de embeddings
+
+2. Ejecuta el script `prepare_embeddings.py` para procesar documentos y generar embeddings:
+
+```bash
+poetry run python prepare_embeddings.py
+```
+
+Este script:
+
+- Lee los archivos `.txt` del directorio `docs/`
+- Divide cada documento en chunks (configurable con `CHUNK_SIZE` y `CHUNK_OVERLAP`)
+- Genera embeddings para cada chunk usando Ollama (modelo `nomic-embed-text`, dimensión 768)
+- Almacena los embeddings en la tabla `items` de PostgreSQL con su contenido asociado
+
+### Variables de entorno para Vector Store
+
+Añade estas variables a tu archivo `.env`:
+
+```
+PG_HOST=localhost
+PG_PORT=5432
+PG_USER=postgres
+PG_PASS=postgres
+PG_DB=ragdb
+```
 
 ## Licencia
 
@@ -288,3 +316,127 @@ Equipo de Recursos Humanos
 ### Conclusión
 
 El System Prompt es eficaz porque orienta al modelo a mantener un tono formal y profesional, centrado exclusivamente en temas de Recursos Humanos y filtrando consultas fuera de contexto. Además, garantiza respuestas estructuradas, informativas y alineadas con la normativa laboral, cumpliendo así los objetivos del Copiloto de ofrecer soporte fiable y pertinente en RRHH.
+
+## Decisiones de diseño de RAG (Módulo 4)
+
+### Estrategia de Chunking
+
+**Configuración**: Tamaño de chunk de 500 caracteres con solapamiento de 50 caracteres.
+
+**Justificación**:
+
+- **500 caracteres** proporciona suficiente contexto sin exceso de granularidad. Los documentos de RRHH (políticas de vacaciones, gastos) contienen párrafos coherentes que caben cómodamente en este rango.
+- **50 caracteres de solapamiento** asegura continuidad semántica entre chunks adyacentes, evitando que ideas importantes se corten a mitad de una oración o concepto.
+- Este balance mejora tanto la precisión de búsqueda como la calidad de las respuestas del LLM.
+
+### Modelo de Embeddings
+
+**Modelo**: `nomic-embed-text` (ejecutado localmente vía Ollama).
+
+**Justificación**:
+
+- **Open-source y local**: No requiere API externa, reduciendo latencia y garantizando privacidad de datos.
+- **Dimensión 768**: Balance óptimo entre capacidad representativa y eficiencia computacional.
+- **Rendimiento**: Excelente desempeño en tareas de búsqueda semántica para documentos en español.
+- **Costo**: Ejecución local elimina costos de APIs (OpenAI Embeddings, etc.).
+
+### Base de Datos Vectorial
+
+**Solución**: PostgreSQL + pgvector.
+
+**Justificación**:
+
+- **Integración ACID**: pgvector extiende PostgreSQL, permitiendo transacciones ACID sobre embeddings y metadatos simultáneamente.
+- **Flexibilidad SQL**: Posibilidad de filtrar por metadatos (filename, chunk_index) además de búsqueda vectorial pura.
+- **Escalabilidad**: PostgreSQL con pgvector escala bien para volúmenes moderados de documentos (miles de chunks).
+- **Docker ready**: Docker Compose simplifica el setup local y en producción.
+
+## Pruebas de conocimiento
+
+### Prueba 1: Política de Vacaciones
+
+**Request:**
+
+```bash
+curl -X POST "http://localhost:8000/ask" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Cuantos días de vacaciones tiene disponibles un trabajador al año?"}'
+```
+
+**Respuesta obtenida:**
+
+De acuerdo con la política de vacaciones proporcionada, un trabajador tiene derecho a **20 días laborables de vacaciones por año natural**.
+
+Es importante recordar que este derecho aplica a empleados con contrato indefinido o temporal superior a 6 meses. Si un empleado ingresa o cesa durante el año, tendrá vacaciones proporcionales al tiempo trabajado.
+
+---
+
+### Prueba 2: Política de Gastos - Alojamiento
+
+**Request:**
+
+```bash
+curl -X POST "http://localhost:8000/ask" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Si tengo que viajar por trabajo, puedo coger cualquier tipo de hotel, o hay algún límite en el precio al que me tenga que adaptar?"}'
+```
+
+**Respuesta obtenida:**
+
+De acuerdo con la política de gastos de la empresa, para el alojamiento en viajes de trabajo, puede utilizar **hoteles hasta tres estrellas**.
+
+Si necesita un hotel de categoría superior, deberá contar con una justificación y aprobación previa.
+
+---
+
+### Prueba 3: Contacto con RRHH
+
+**Request:**
+
+```bash
+curl -X POST "http://localhost:8000/ask" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "A quién puedo escribir, si necesito comunicarme con una persona de RRHH?"}'
+```
+
+**Respuesta obtenida:**
+
+Puedes comunicarte con una persona de RRHH escribiendo a **rrhh@empresa.com** o consultando directamente con el departamento de Recursos Humanos.
+
+---
+
+### Prueba 4: Días de vacaciones para trabajador de RRHH
+
+**Request:**
+
+```bash
+curl -X POST "http://localhost:8000/ask" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Cuántos días de vacaciones hay para un trabajador de RRHH?", "history": []}'
+```
+
+**Respuesta obtenida:**
+
+Según la Política de Vacaciones proporcionada:
+
+Todos los empleados, **incluyendo a los trabajadores de RRHH**, con contrato indefinido o temporal superior a 6 meses, tienen derecho a **20 días laborables de vacaciones por año natural**.
+
+Si un empleado ingresa o cesa durante el año, tendrá vacaciones proporcionales al tiempo trabajado.
+
+---
+
+### Prueba 5: Continuidad de Conversación (con Historial)
+
+**Request:**
+
+```bash
+curl -X POST "http://localhost:8000/ask" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Y para un desarrollador?", "history": [{"role": "user", "content": "Cuántos días de vacaciones hay para un trabajador de RRHH"}, {"role": "assistant", "content": "Según la Política de Vacaciones proporcionada: Todos los empleados, **incluyendo a los trabajadores de RRHH**, con contrato indefinido o temporal superior a 6 meses, tienen derecho a **20 días laborables de vacaciones por año natural**.Si un empleado ingresa o cesa durante el año, tendrá vacaciones proporcionales al tiempo trabajado."}]}'
+```
+
+**Respuesta obtenida:**
+
+Según la Política de Vacaciones proporcionada, el derecho a vacaciones es el mismo para **todos los empleados** que cumplan con las condiciones de contrato (indefinido o temporal superior a 6 meses).
+
+Por lo tanto, un desarrollador también tendrá derecho a **20 días laborables de vacaciones por año natural**, siempre que cumpla con los requisitos de antigüedad y tipo de contrato establecidos en la política.
