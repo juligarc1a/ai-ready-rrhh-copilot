@@ -1,18 +1,31 @@
-version: "3.9"
 services:
   postgres:
-    image: pgvector/pgvector:pg16  # Imagen oficial de pgvector basada en postgres 16
+    image: pgvector/pgvector:pg16
     container_name: pgvector-db
     environment:
-      POSTGRES_USER: postgres     # Usuario por defecto
-      POSTGRES_PASSWORD: postgres # Contraseña por defecto (cambia esto en producción)
-      POSTGRES_DB: ragdb          # Nombre de la base de datos inicial
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ragdb
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     restart: unless-stopped
 
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    # Precarga el modelo al arrancar el contenedor
+    entrypoint: >
+      /bin/bash -c "ollama serve & sleep 5 && ollama pull nomic-embed-text && tail -f /dev/null"
+    restart: unless-stopped
+
 volumes:
   pgdata:
+    driver: local
+  ollama_data:
     driver: local
