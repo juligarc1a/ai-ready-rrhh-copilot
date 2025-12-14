@@ -31,8 +31,13 @@ EMBEDDING_DIM = 768
 
 app = FastAPI()
 
+class Message(BaseModel):
+    role: str
+    content: str
+
 class Question(BaseModel):
     query: str
+    history: List[Message] = []
 
 def load_prompts() -> dict:
     prompts_path = Path(__file__).parent.parent.parent / "resources" / "prompts.yaml"
@@ -81,9 +86,17 @@ async def stream_model_response(client: genai.Client, prompt: str) -> AsyncItera
         if chunk.text:
             yield chunk.text
 
-def build_rag_prompt(context_chunks: List[str], user_question: str) -> str:
+def build_rag_prompt(context_chunks: List[str], history: List[dict], user_question: str) -> str:
     context_joined = "\n\n".join(context_chunks)
-    return f"""[CONTEXTO]\n{context_joined}\n\n[PREGUNTA]\n{user_question}"""
+    history_text = ""
+    for msg in history:
+        who = "Usuario" if msg.role == "user" else "Asistente"
+        history_text += f"{who}: {msg.content}\n"
+    return (
+        f"[CONTEXTO]\n{context_joined}\n\n"
+        f"[HISTORIAL]\n{history_text}\n\n"
+        f"[PREGUNTA]\n{user_question}"
+    )
 
 @app.post("/ask")
 async def ask(question: Question):
@@ -91,7 +104,7 @@ async def ask(question: Question):
 
     chunks = search_similar_chunks(query_embedding, top_k=CONTEXT_CHUNKS)
 
-    rag_prompt = build_rag_prompt(chunks, question.query)
+    rag_prompt = build_rag_prompt(chunks, question.history, question.query)
 
     client = build_client()
     stream = stream_model_response(client, rag_prompt)
