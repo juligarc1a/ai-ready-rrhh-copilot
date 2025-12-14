@@ -10,7 +10,7 @@ PG_CONFIG = {
     "password": "postgres",
     "dbname": "ragdb"
 }
-TXT_DIRECTORY = "./texts"  # Directorio con archivos .txt
+TXT_DIRECTORY = "./docs"  # Directorio con archivos .txt
 EMBEDDING_DIM = 768        # Cambia según tu modelo
 CHUNK_SIZE = 500           # Caracteres por chunk (modifica según lo que prefieras)
 CHUNK_OVERLAP = 50         # Superposición de caracteres entre chunks para mejor contexto
