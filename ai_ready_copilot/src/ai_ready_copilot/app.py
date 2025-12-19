@@ -1,22 +1,26 @@
 import os
-from typing import AsyncIterator, List
-from pathlib import Path
-
-import yaml
-from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from typing import List
+from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
-from google import genai
+from dotenv import load_dotenv
+import yaml
+from pathlib import Path
 from pydantic import BaseModel
-from google.genai import types
 import psycopg2
 import ollama
 
-load_dotenv()
+from google.adk.runners import Runner
+from google.adk.sessions import InMemorySessionService
+from google.adk.artifacts.in_memory_artifact_service import InMemoryArtifactService # Optional
+from google.adk.planners import BasePlanner, BuiltInPlanner, PlanReActPlanner
+from google.adk.models import LlmRequest
+from google.adk.agents import Agent
+from google.genai import types
 
+
+load_dotenv()
 MODEL_NAME = "gemini-2.5-flash"
 
-# --------- Configuración Vector Store --------------
 DB_CONFIG = {
     "host": os.getenv('PG_HOST', "localhost"),
     "port": int(os.getenv('PG_PORT', 5432)),
@@ -26,8 +30,6 @@ DB_CONFIG = {
 }
 EMBED_MODEL = 'nomic-embed-text'
 CONTEXT_CHUNKS = 3
-EMBEDDING_DIM = 768 
-# -----------------------------------------------------
 
 app = FastAPI()
 
@@ -39,27 +41,11 @@ class Question(BaseModel):
     query: str
     history: List[Message] = []
 
-def load_prompts() -> dict:
-    prompts_path = Path(__file__).parent.parent.parent / "resources" / "prompts.yaml"
-    with open(prompts_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-
-PROMPTS = load_prompts()
-BASE_BEHAVIOR = PROMPTS["base_behavior"]
-
-def build_client() -> genai.Client:
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="GEMINI_API_KEY is missing")
-    return genai.Client(api_key=api_key)
-
 def embed_query(text: str) -> List[float]:
-    """Genera el embedding del texto usando Ollama localmente."""
     resp = ollama.embeddings(model=EMBED_MODEL, prompt=text)
     return resp['embedding']
 
 def search_similar_chunks(query_embedding: List[float], top_k: int = CONTEXT_CHUNKS) -> List[str]:
-    """Busca los chunks más similares en la base de datos con pgvector."""
     conn = psycopg2.connect(**DB_CONFIG)
     cur = conn.cursor()
     embedding_str = '[' + ','.join(str(x) for x in query_embedding) + ']'
@@ -77,35 +63,101 @@ def search_similar_chunks(query_embedding: List[float], top_k: int = CONTEXT_CHU
     conn.close()
     return [r[0] for r in rows]
 
-async def stream_model_response(client: genai.Client, prompt: str) -> AsyncIterator[str]:
-    async for chunk in await client.aio.models.generate_content_stream(
+def load_prompts() -> dict:
+    prompts_path = Path(__file__).parent.parent.parent / "resources" / "prompts.yaml"
+    with open(prompts_path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
+
+PROMPTS = load_prompts()
+BASE_BEHAVIOR = PROMPTS["base_behavior"]
+
+# ------- Declarar tools explícitas usando la nueva API Tool de ADK -------
+def rag_search(question: str) -> str:
+    embedding = embed_query(question)
+    chunks = search_similar_chunks(embedding, top_k=CONTEXT_CHUNKS)
+    return "\n".join(chunks)
+
+def do_math(expr: str) -> str:
+    try:
+        result = eval(expr)
+        return str(result)
+    except Exception as e:
+        return f"Error: {e}"
+
+
+# ----------- Configurar el modelo y el agente ADK ---------------
+# def build_adk_agent():
+#     # configure(api_key=os.getenv("GEMINI_API_KEY"))
+#     agent = Agent(
+#         name="RRHH_Copilot_Agent",
+#         model=MODEL_NAME,
+#         tools=[rag_search, do_math],  # Aquí usas los Tool objects, no los decoradores
+#         instruction=BASE_BEHAVIOR  # Prompt/rol como siempre
+#     )
+#     return agent
+def build_adk_agent():
+    return Agent(
+        name="RRHH_Copilot_Agent",
         model=MODEL_NAME,
-        contents=prompt,
-        config=types.GenerateContentConfig(system_instruction=BASE_BEHAVIOR)
-    ):
+        tools=[rag_search, do_math],
+        instruction=BASE_BEHAVIOR,
+    )
+
+
+def history_to_adk(history: List[Message]):
+    adk_hist = []
+    for msg in history:
+        if msg.role == "user":
+            adk_hist.append({"role": "user", "content": msg.content})
+        elif msg.role in ("assistant", "system"):
+            adk_hist.append({"role": "assistant", "content": msg.content})
+    return adk_hist
+
+async def stream_agent(agent, user_question: str, history: List[Message]):
+    responses = agent.achat(user_question, history=history_to_adk(history), stream=True)
+    async for chunk in responses:
         if chunk.text:
             yield chunk.text
 
-def build_rag_prompt(context_chunks: List[str], history: List[dict], user_question: str) -> str:
-    context_joined = "\n\n".join(context_chunks)
-    history_text = ""
-    for msg in history:
-        who = "Usuario" if msg.role == "user" else "Asistente"
-        history_text += f"{who}: {msg.content}\n"
-    return (
-        f"[CONTEXTO]\n{context_joined}\n\n"
-        f"[HISTORIAL]\n{history_text}\n\n"
-        f"[PREGUNTA]\n{user_question}"
-    )
+APP_NAME = "RRHH_Copilot_App"
+
+session_service = InMemorySessionService()
+
+APP_NAME = "RRHH_Copilot_App"
+USER_ID = "user_123"
+SESSION_ID = "session_abc"
+
+agent = build_adk_agent()
+
+session_service = InMemorySessionService()
+example_session = session_service.create_session(
+     app_name="my_app",
+     user_id="example_user",
+     state={"initial_key": "initial_value"} # State can be initialized
+ )
+runner = Runner(
+    agent=agent,
+    app_name=APP_NAME,
+    session_service=example_session,
+)
 
 @app.post("/ask")
-async def ask(question: Question):
-    query_embedding = embed_query(question.query)
+async def ask(q: Question):
+    content = types.Content(
+        role="user",
+        parts=[types.Part(text=q.query)]
+    )
 
-    chunks = search_similar_chunks(query_embedding, top_k=CONTEXT_CHUNKS)
+    async def event_stream():
+        for event in runner.run(
+            user_id=USER_ID,
+            session_id=SESSION_ID,
+            new_message=content,
+        ):
+            if hasattr(event, "text") and event.text:
+                yield event.text
 
-    rag_prompt = build_rag_prompt(chunks, question.history, question.query)
-
-    client = build_client()
-    stream = stream_model_response(client, rag_prompt)
-    return StreamingResponse(stream, media_type="text/plain")
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/plain"
+    )
