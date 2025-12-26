@@ -108,16 +108,11 @@ def search_knowledge_base(query: str) -> dict:
 # ---------------------------------------
 # Modelo + Agente
 # ---------------------------------------
-# model = Gemini(
-#     model="gemini-2.5-flash",
-#     api_key=os.getenv("GEMINI_API_KEY"),
-#     system_instruction=BASE_BEHAVIOR,
-# )
 
 root_agent = Agent(
     name="rrhh_agent",
     model="gemini-2.5-flash",
-    description=PROMPTS,
+    # static_instruction=PROMPTS,
     tools=[calculator, search_knowledge_base],
 )
 
@@ -127,39 +122,47 @@ root_agent = Agent(
 session_service = InMemorySessionService()
 
 runner = Runner(
+    agent = root_agent,
     app_name="ai_ready_copilot",
-    agent=root_agent,
     session_service=session_service,
 )
+
 
 # ---------------------------------------
 # Endpoint FastAPI streaming
 # ---------------------------------------
 async def event_stream(question: str) -> AsyncIterator[str]:
+
     session = await session_service.create_session(
         app_name="ai_ready_copilot",
         user_id="anonymous",
-        session_id="session_id"
-    )
-
-
-    # ctx = InvocationContext(
-    # invocation_id=str(uuid.uuid4()),  # o tu propio id único
-    # session=session,
-    # agent=root_agent,
-    # )
-
-    # async for event in runner.run_async(ctx):
-    #     if hasattr(event, "output_text") and event.output_text:
-    #         yield event.output_text
-
-    runner = Runner(
-        agent = root_agent,
-        app_name="ai_ready_copilot",
-        session_service=session_service,
     )
 
     new_message = Content(role="user", parts=[Part(text=question)])
+
+    events = runner.run_async(
+        user_id="anonymous",
+        session_id=session.id,
+        new_message=new_message,
+    )
+
+    async for event in events:
+        print("Event received:", event)
+        # 1) Si el ADK expone output_text, úsalo directamente
+        if hasattr(event, "output_text") and event.output_text:
+            yield event.output_text
+            continue
+
+        # 2) Extraer texto de event.content.parts (caso más común)
+        content = getattr(event, "content", None)
+        if content and getattr(content, "parts", None):
+            text_chunks = [
+                part.text
+                for part in content.parts
+                if hasattr(part, "text") and part.text
+            ]
+            if text_chunks:
+                yield "".join(text_chunks)
 
 @app.post("/ask")
 async def ask(question: Question):
