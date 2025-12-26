@@ -32,7 +32,7 @@ class Message(BaseModel):
 
 class Question(BaseModel):
     query: str
-    history: List[Message] = []
+    session_id: str | None = None
 
 # ---------------------------------------
 # Prompt config
@@ -142,18 +142,13 @@ runner = Runner(
 # ---------------------------------------
 # Endpoint FastAPI streaming
 # ---------------------------------------
-async def event_stream(question: str) -> AsyncIterator[str]:
-
-    session = await session_service.create_session(
-        app_name="ai_ready_copilot",
-        user_id="anonymous",
-    )
+async def event_stream(question: str, session_id: str) -> AsyncIterator[str]:
 
     new_message = Content(role="user", parts=[Part(text=question)])
 
     events = runner.run_async(
         user_id="anonymous",
-        session_id=session.id,
+        session_id=session_id,
         new_message=new_message,
     )
 
@@ -178,6 +173,30 @@ async def event_stream(question: str) -> AsyncIterator[str]:
 @app.post("/ask")
 async def ask(question: Question):
     try:
-        return StreamingResponse(event_stream(question.query), media_type="text/plain")
+        session_id = question.session_id
+
+        if session_id:
+            existing = await session_service.get_session(
+                app_name="ai_ready_copilot",
+                user_id="anonymous",
+                session_id=session_id,
+            )
+            if not existing:
+                raise HTTPException(status_code=404, detail="Session not found")
+        else:
+            # Si no viene, crear una nueva sesión.
+            session = await session_service.create_session(
+                app_name="ai_ready_copilot",
+                user_id="anonymous",
+            )
+            session_id = session.id
+            print(f"Created new session with ID: {session_id}")
+
+        response = StreamingResponse(
+            event_stream(question.query, session_id),
+            media_type="text/plain",
+        )
+        response.headers["X-Session-Id"] = session_id
+        return response
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
