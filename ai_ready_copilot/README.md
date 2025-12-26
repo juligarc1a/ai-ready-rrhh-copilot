@@ -440,3 +440,55 @@ curl -X POST "http://localhost:8000/ask" \
 Según la Política de Vacaciones proporcionada, el derecho a vacaciones es el mismo para **todos los empleados** que cumplan con las condiciones de contrato (indefinido o temporal superior a 6 meses).
 
 Por lo tanto, un desarrollador también tendrá derecho a **20 días laborables de vacaciones por año natural**, siempre que cumpla con los requisitos de antigüedad y tipo de contrato establecidos en la política.
+
+---
+
+Algunos ejemplos de historial con ADK:
+
+```bash
+curl -D - -X POST "http://127.0.0.1:8000/ask" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Puedes por favor decirme cuál es la raíz cuadrada de 3 y ese resultado multiplicarlo por 7?"}'
+HTTP/1.1 200 OK
+date: Fri, 26 Dec 2025 13:48:25 GMT
+server: uvicorn
+content-type: text/plain; charset=utf-8
+x-session-id: 8d6e5587-e83c-453d-b125-98b7c90a3a3b
+Transfer-Encoding: chunked
+
+La raíz cuadrada de 3 multiplicada por 7 es aproximadamente 12.12.%
+
+```
+
+```bash
+curl -X POST "http://127.0.0.1:8000/ask" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Dame 12 decimales",
+ "session_id": "d6c25718-fa39-4b27-ba09-d336da6df1f2"}'
+{"detail":"404: Session not found"}
+```
+
+```bash
+curl -X POST "http://127.0.0.1:8000/ask" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Pide 5 días de vacaciones a partir del lunes"}'
+¡Tu solicitud de 5 días de vacaciones a partir del lunes ha sido enviada! Tus vacaciones irán desde el 29 de diciembre de 2025 hasta el 2 de enero de 2026.
+```
+
+```bash
+curl -X POST "http://127.0.0.1:8000/ask" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Pide vacaciones entre los días 2/3/2026 y 5/3/2026"}'
+¡Claro! Tus vacaciones han sido solicitadas desde el 2 de marzo de 2026 hasta el 5 de marzo de 2026.
+```
+
+```bash
+curl -X POST "http://127.0.0.1:8000/ask" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "Pídeme de vacaciones la primera semana laborable de febrero de 2026"}'
+Para poder solicitar tus vacaciones, necesito confirmar las fechas exactas.
+
+Si te refieres a la primera semana completa de trabajo de febrero de 2026, esto sería **del lunes 2 de febrero al viernes 6 de febrero de 2026**, lo que suma 5 días laborables.
+
+¿Estás de acuerdo con estas fechas para tu solicitud de vacaciones?
+```
