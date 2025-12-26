@@ -17,6 +17,7 @@ from google.adk.sessions import InMemorySessionService
 from google.adk.runners import Runner
 from google.adk.agents.invocation_context import InvocationContext
 from google.genai.types import Content, Part
+import math
 
 load_dotenv()
 
@@ -47,18 +48,28 @@ BASE_BEHAVIOR = PROMPTS["base_behavior"]
 # ---------------------------------------
 # Tools
 # ---------------------------------------
+ALLOWED_MATH = {
+    "sqrt": math.sqrt,
+    "sin": math.sin,
+    "cos": math.cos,
+    "tan": math.tan,
+    "log": math.log,
+    "pi": math.pi,
+    "e": math.e,
+}
+
 def calculator(expression: str) -> dict:
     """
-    Evalúa una expresión matemática simple.
+    Evalúa una expresión matemática simple con python.
 
     Args:
-        expression (str): La expresión a evaluar.
+        expression (str): La expresión de python a evaluar.
 
     Returns:
         dict: status y resultado o mensaje de error.
     """
     try:
-        result = eval(expression, {"__builtins__": {}})
+        result = eval(expression, {"__builtins__": {}, **ALLOWED_MATH})
         return {"status": "success", "result": result}
     except Exception as e:
         return {"status": "error", "error_message": str(e)}
@@ -112,7 +123,7 @@ def search_knowledge_base(query: str) -> dict:
 root_agent = Agent(
     name="rrhh_agent",
     model="gemini-2.5-flash",
-    # static_instruction=PROMPTS,
+    static_instruction=BASE_BEHAVIOR,
     tools=[calculator, search_knowledge_base],
 )
 
